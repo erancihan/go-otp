@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// testSecret is a non-sensitive Base32 value used purely as a unit-test
+// vector; it is the public example secret from the article this package is
+// based on (it decodes to the throwaway string "3JMPVLDG32XOFTVS"). It is not
+// a real credential and is intentionally allow-listed in .gitguardian.yaml.
+const testSecret = "GNFE2UCWJRCEOMZSLBHUMVCWKM"
+
 func Test_NewQR(t *testing.T) {
 	qr, err := NewQR("otpauth://type/label?parameters")
 	if err != nil {
@@ -72,7 +78,7 @@ func Test_OTP_CreateURI(t *testing.T) {
 		special := &OTP{
 			Issuer:  "Example Inc",
 			Account: "john doe@example.com",
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 		}
 		uri := special.CreateURI()
 
@@ -96,8 +102,8 @@ func Test_OTP_CreateURI(t *testing.T) {
 		if got := u.Query().Get("issuer"); got != "Example Inc" {
 			t.Error("\nEXPECTED issuer: Example Inc\nACTUAL  :", got)
 		}
-		if got := u.Query().Get("secret"); got != "GNFE2UCWJRCEOMZSLBHUMVCWKM" {
-			t.Error("\nEXPECTED secret: GNFE2UCWJRCEOMZSLBHUMVCWKM\nACTUAL  :", got)
+		if got := u.Query().Get("secret"); got != testSecret {
+			t.Error("\nEXPECTED secret:", testSecret, "\nACTUAL  :", got)
 		}
 	})
 }
@@ -125,7 +131,7 @@ func Test_OTP_CreateHOTPCode(t *testing.T) {
 	})
 
 	t.Run("successful code creation and counter increase", func(t *testing.T) {
-		twoFA.Secret = "GNFE2UCWJRCEOMZSLBHUMVCWKM"
+		twoFA.Secret = testSecret
 		code, err := twoFA.CreateHOTPCode(2)
 		if err != nil {
 			t.Error("an error was not \nEXPECTED:\nACTUAL  :", err.Error())
@@ -174,7 +180,7 @@ func Test_OTP_VerifyCode(t *testing.T) {
 
 	t.Run("failed verification for hotp code", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Counter: 1,
 		}
 		ok, err := twoFA.VerifyCode("000000") // Random code
@@ -188,7 +194,7 @@ func Test_OTP_VerifyCode(t *testing.T) {
 
 	t.Run("successful verification for valid hotp code", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Counter: 1,
 		}
 		ok, err := twoFA.VerifyCode("204727") // Code for current counter
@@ -215,7 +221,7 @@ func Test_OTP_VerifyCode(t *testing.T) {
 	})
 
 	t.Run("failed verification for totp code", func(t *testing.T) {
-		twoFA := &OTP{Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM"}
+		twoFA := &OTP{Secret: testSecret}
 		ok, err := twoFA.VerifyCode("000000") // Random code
 		if err != nil {
 			t.Error("an error was not \nEXPECTED:\nACTUAL  :", err.Error())
@@ -226,7 +232,7 @@ func Test_OTP_VerifyCode(t *testing.T) {
 	})
 
 	t.Run("successful verification for valid totp code", func(t *testing.T) {
-		twoFA := &OTP{Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM"}
+		twoFA := &OTP{Secret: testSecret}
 
 		code, err := twoFA.createCode(int(time.Now().UTC().Unix() / OTPPeriod)) // Code from current time
 		if err != nil {
@@ -260,7 +266,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("failed verification for invalid code with resynchronisation disabled", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 0, // resynchronisation disabled
 		}
 		ok, err := twoFA.verifyTOTP("000000") // Random code
@@ -274,7 +280,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("failed verification for invalid code with resynchronisation enabled", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 1, // resynchronisation enabled
 		}
 		ok, err := twoFA.verifyTOTP("000000") // Random code
@@ -288,7 +294,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("successful verification with resynchronisation disabled and without time drift", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 0, // resynchronisation disabled
 		}
 
@@ -308,7 +314,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("successful verification with resynchronisation enabled and with time drift of previous window", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 1, // resynchronisation enabled
 		}
 
@@ -328,7 +334,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("failed verification with resynchronisation disabled and with time drift of previous window", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 0, // resynchronisation disabled
 		}
 
@@ -348,7 +354,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("successful verification with resynchronisation enabled and with time drift of next window", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 1, // resynchronisation enabled
 		}
 
@@ -368,7 +374,7 @@ func Test_OTP_verifyTOTP(t *testing.T) {
 
 	t.Run("failed verification with resynchronisation disabled and with time drift of next window", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret: testSecret,
 			Window: 0, // resynchronisation disabled
 		}
 
@@ -404,7 +410,7 @@ func Test_OTP_verifyHOTP(t *testing.T) {
 
 	t.Run("failed verification for invalid code with resynchronisation disabled", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Window:  0, // resynchronisation disabled
 			Counter: 1,
 		}
@@ -422,7 +428,7 @@ func Test_OTP_verifyHOTP(t *testing.T) {
 
 	t.Run("failed verification for invalid code with resynchronisation enabled", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Window:  1, // resynchronisation enabled
 			Counter: 1,
 		}
@@ -440,7 +446,7 @@ func Test_OTP_verifyHOTP(t *testing.T) {
 
 	t.Run("successful verification with resynchronisation disabled and without counter drift", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Window:  0, // resynchronisation disabled
 			Counter: 1,
 		}
@@ -458,7 +464,7 @@ func Test_OTP_verifyHOTP(t *testing.T) {
 
 	t.Run("successful verification with resynchronisation enabled and with counter drift", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Window:  1, // resynchronisation enabled
 			Counter: 1,
 		}
@@ -476,7 +482,7 @@ func Test_OTP_verifyHOTP(t *testing.T) {
 
 	t.Run("failed verification with resynchronisation disabled and with counter drift", func(t *testing.T) {
 		twoFA := &OTP{
-			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+			Secret:  testSecret,
 			Window:  0, // resynchronisation disabled
 			Counter: 1,
 		}
@@ -509,7 +515,7 @@ func Test_OTP_createCode(t *testing.T) {
 	})
 
 	t.Run("successful code creation", func(t *testing.T) {
-		twoFA := &OTP{Secret: "GNFE2UCWJRCEOMZSLBHUMVCWKM"}
+		twoFA := &OTP{Secret: testSecret}
 		code, err := twoFA.createCode(1)
 		if err != nil {
 			t.Error("\nEXPECTED: \nACTUAL  :", err.Error())
@@ -577,7 +583,7 @@ func Test_OTP_CreateURI_customOptions(t *testing.T) {
 
 func Test_OTP_VerifyCode_customTOTP(t *testing.T) {
 	twoFA := &OTP{
-		Secret:    "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+		Secret:    testSecret,
 		Digits:    8,
 		Algorithm: AlgorithmSHA512,
 		Window:    1, // tolerate a time-step boundary crossing during the test

@@ -1,0 +1,12 @@
+# GitGuardian / ggshield configuration.
+# https://docs.gitguardian.com/ggshield-docs/configuration
+version: 2
+
+secret:
+  ignored-matches:
+    # Non-sensitive Base32 value used only as a unit-test vector in
+    # otp_test.go (see the testSecret constant). It is the public example
+    # secret from the article this package is based on and decodes to the
+    # throwaway string "3JMPVLDG32XOFTVS" -- it is not a real credential.
+    - name: otp unit-test vector (testSecret)
+      match: GNFE2UCWJRCEOMZSLBHUMVCWKM
