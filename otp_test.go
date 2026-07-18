@@ -3,6 +3,8 @@ package otp
 import (
 	"encoding/base32"
 	"fmt"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,16 +53,51 @@ func Test_OTP_CreateURI(t *testing.T) {
 
 	t.Run("totp uri", func(t *testing.T) {
 		uri := twoFA.CreateURI()
-		if uri != "otpauth://totp/issuer:account?secret=secret&issuer=issuer" {
-			t.Error("\nEXPECTED: otpauth://totp/issuer:account?secret=secret&issuer=issuer\nACTUAL  :", uri)
+		want := "otpauth://totp/issuer:account?algorithm=SHA1&digits=6&issuer=issuer&period=30&secret=secret"
+		if uri != want {
+			t.Error("\nEXPECTED:", want, "\nACTUAL  :", uri)
 		}
 	})
 
 	t.Run("hotp uri", func(t *testing.T) {
 		twoFA.Counter = 1
 		uri := twoFA.CreateURI()
-		if uri != "otpauth://hotp/issuer:account?secret=secret&issuer=issuer&counter=1" {
-			t.Error("\nEXPECTED: otpauth://hotp/issuer:account?secret=secret&issuer=issuer&counter=1\nACTUAL  :", uri)
+		want := "otpauth://hotp/issuer:account?algorithm=SHA1&counter=1&digits=6&issuer=issuer&secret=secret"
+		if uri != want {
+			t.Error("\nEXPECTED:", want, "\nACTUAL  :", uri)
+		}
+	})
+
+	t.Run("special characters are encoded", func(t *testing.T) {
+		special := &OTP{
+			Issuer:  "Example Inc",
+			Account: "john doe@example.com",
+			Secret:  "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+		}
+		uri := special.CreateURI()
+
+		if strings.Contains(uri, " ") {
+			t.Error("URI must not contain raw spaces\nACTUAL  :", uri)
+		}
+
+		u, err := url.Parse(uri)
+		if err != nil {
+			t.Fatal("URI should be parseable\nACTUAL  :", err)
+		}
+		if u.Scheme != "otpauth" {
+			t.Error("\nEXPECTED scheme: otpauth\nACTUAL  :", u.Scheme)
+		}
+		if u.Host != "totp" {
+			t.Error("\nEXPECTED host: totp\nACTUAL  :", u.Host)
+		}
+		if u.Path != "/Example Inc:john doe@example.com" {
+			t.Error("\nEXPECTED path: /Example Inc:john doe@example.com\nACTUAL  :", u.Path)
+		}
+		if got := u.Query().Get("issuer"); got != "Example Inc" {
+			t.Error("\nEXPECTED issuer: Example Inc\nACTUAL  :", got)
+		}
+		if got := u.Query().Get("secret"); got != "GNFE2UCWJRCEOMZSLBHUMVCWKM" {
+			t.Error("\nEXPECTED secret: GNFE2UCWJRCEOMZSLBHUMVCWKM\nACTUAL  :", got)
 		}
 	})
 }

@@ -6,11 +6,15 @@ Retrieved from: http://www.inanzzz.com/index.php/post/y5nu/creating-a-one-time-p
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
-	"math/rand"
+	"math"
+	"net/url"
+	"strconv"
 	"time"
 
 	"rsc.io/qr"
@@ -26,22 +30,20 @@ func NewQR(uri string) ([]byte, error) {
 }
 
 const (
-	// https://datatracker.ietf.org/doc/html/rfc3548#section-5
-	base32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 	// length defines the OTP code in character length.
 	OTPLength = 6
 	// period defines the TTL of a TOTP code in seconds.
 	OTPPeriod = 30
 )
 
+// NewSecret generates a cryptographically secure, Base32-encoded shared
+// secret suitable for OTP provisioning. It reads 16 random bytes (128 bits
+// of entropy) from crypto/rand and encodes them without padding, yielding a
+// 26-character string.
 func NewSecret() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
-	}
-
-	for index, value := range bytes {
-		bytes[index] = base32Alphabet[value%byte(len(base32Alphabet))]
 	}
 
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(bytes), nil
@@ -94,14 +96,25 @@ type OTP struct {
 // https://github.com/google/google-authenticator/wiki/Key-Uri-Format
 func (o *OTP) CreateURI() string {
 	algorithm := "totp"
-	counter := ""
+
+	// The label is "Issuer:Account"; each component is escaped independently
+	// so that the ":" separator is preserved.
+	label := url.PathEscape(o.Issuer) + ":" + url.PathEscape(o.Account)
+
+	query := url.Values{}
+	query.Set("secret", o.Secret)
+	query.Set("issuer", o.Issuer)
+	query.Set("algorithm", "SHA1")
+	query.Set("digits", strconv.Itoa(OTPLength))
 
 	if o.Counter != 0 {
 		algorithm = "hotp"
-		counter = fmt.Sprintf("&counter=%d", o.Counter)
+		query.Set("counter", strconv.Itoa(o.Counter))
+	} else {
+		query.Set("period", strconv.Itoa(OTPPeriod))
 	}
 
-	return fmt.Sprintf("otpauth://%s/%s:%s?secret=%s&issuer=%s%s", algorithm, o.Issuer, o.Account, o.Secret, o.Issuer, counter)
+	return fmt.Sprintf("otpauth://%s/%s?%s", algorithm, label, query.Encode())
 }
 
 // CreateHOTPCode creates a new HOTP with a specific counter. This method is
@@ -168,7 +181,7 @@ func (o *OTP) verifyTOTP(code string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("create code: %w", err)
 		}
-		if val == code {
+		if subtle.ConstantTimeCompare([]byte(val), []byte(code)) == 1 {
 			return true, nil
 		}
 	}
@@ -192,7 +205,7 @@ func (o *OTP) verifyHOTP(code string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("create code: %w", err)
 		}
-		if val == code {
+		if subtle.ConstantTimeCompare([]byte(val), []byte(code)) == 1 {
 			o.Counter += i + 1
 			return true, nil
 		}
@@ -219,5 +232,6 @@ func (o *OTP) createCode(interval int) (string, error) {
 	offset := sign[19] & 15
 	trunc := binary.BigEndian.Uint32(sign[offset : offset+4])
 
-	return fmt.Sprintf("%0*d", OTPLength, (trunc&0x7fffffff)%1000000), nil
+	mod := uint32(math.Pow10(OTPLength))
+	return fmt.Sprintf("%0*d", OTPLength, (trunc&0x7fffffff)%mod), nil
 }
