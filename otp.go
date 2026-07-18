@@ -1,17 +1,26 @@
+// Package otp implements one-time passwords following the TOTP (RFC 6238)
+// and HOTP (RFC 4226) standards, together with helpers for generating shared
+// secrets, provisioning URIs, and QR codes for authenticator apps.
+//
+// The default configuration matches what authenticator apps expect: 6-digit
+// codes, a 30-second TOTP period, and HMAC-SHA1. These can be overridden per
+// OTP value via the Digits, Period, and Algorithm fields.
+//
+// Original implementation adapted from:
+// http://www.inanzzz.com/index.php/post/y5nu/creating-a-one-time-password-otp-library-for-two-factor-authentication-2fa-with-golang
 package otp
-
-/**
-Retrieved from: http://www.inanzzz.com/index.php/post/y5nu/creating-a-one-time-password-otp-library-for-two-factor-authentication-2fa-with-golang
-*/
 
 import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"math"
 	"net/url"
 	"strconv"
@@ -20,6 +29,8 @@ import (
 	"rsc.io/qr"
 )
 
+// NewQR encodes the given otpauth URI as a PNG-formatted QR code. The URI is
+// typically produced by (*OTP).CreateURI.
 func NewQR(uri string) ([]byte, error) {
 	code, err := qr.Encode(uri, qr.Q)
 	if err != nil {
@@ -30,11 +41,36 @@ func NewQR(uri string) ([]byte, error) {
 }
 
 const (
-	// length defines the OTP code in character length.
+	// OTPLength is the default number of digits in a generated code.
 	OTPLength = 6
-	// period defines the TTL of a TOTP code in seconds.
+	// OTPPeriod is the default TTL of a TOTP code in seconds.
 	OTPPeriod = 30
 )
+
+// Algorithm identifies the HMAC hash function used to derive codes. The zero
+// value is treated as AlgorithmSHA1, which is the default mandated by RFC 4226
+// and understood by virtually all authenticator apps.
+type Algorithm string
+
+const (
+	AlgorithmSHA1   Algorithm = "SHA1"
+	AlgorithmSHA256 Algorithm = "SHA256"
+	AlgorithmSHA512 Algorithm = "SHA512"
+)
+
+// hash returns the hash constructor for the algorithm along with its
+// canonical name for use in an otpauth URI. Unknown or empty values fall back
+// to SHA1.
+func (a Algorithm) hash() (func() hash.Hash, string) {
+	switch a {
+	case AlgorithmSHA256:
+		return sha256.New, string(AlgorithmSHA256)
+	case AlgorithmSHA512:
+		return sha512.New, string(AlgorithmSHA512)
+	default:
+		return sha1.New, string(AlgorithmSHA1)
+	}
+}
 
 // NewSecret generates a cryptographically secure, Base32-encoded shared
 // secret suitable for OTP provisioning. It reads 16 random bytes (128 bits
@@ -88,6 +124,33 @@ type OTP struct {
 	// be enabled.
 	// https://datatracker.ietf.org/doc/html/rfc4226#page-11
 	Counter int
+	// Digits is the number of digits in a generated code. It defaults to
+	// OTPLength (6) when zero. Authenticator apps typically support 6 or 8.
+	Digits int
+	// Period is the TOTP time step in seconds. It defaults to OTPPeriod (30)
+	// when zero and is ignored for HOTP.
+	Period int
+	// Algorithm selects the HMAC hash function. The zero value defaults to
+	// AlgorithmSHA1.
+	Algorithm Algorithm
+}
+
+// digits returns the effective number of code digits, applying the default
+// when the field is unset.
+func (o *OTP) digits() int {
+	if o.Digits > 0 {
+		return o.Digits
+	}
+	return OTPLength
+}
+
+// period returns the effective TOTP time step in seconds, applying the
+// default when the field is unset.
+func (o *OTP) period() int {
+	if o.Period > 0 {
+		return o.Period
+	}
+	return OTPPeriod
 }
 
 // CreateURI builds the authentication URI which is used to create a QR code.
@@ -95,26 +158,28 @@ type OTP struct {
 // HOTP.
 // https://github.com/google/google-authenticator/wiki/Key-Uri-Format
 func (o *OTP) CreateURI() string {
-	algorithm := "totp"
+	otpType := "totp"
 
 	// The label is "Issuer:Account"; each component is escaped independently
 	// so that the ":" separator is preserved.
 	label := url.PathEscape(o.Issuer) + ":" + url.PathEscape(o.Account)
 
+	_, algName := o.Algorithm.hash()
+
 	query := url.Values{}
 	query.Set("secret", o.Secret)
 	query.Set("issuer", o.Issuer)
-	query.Set("algorithm", "SHA1")
-	query.Set("digits", strconv.Itoa(OTPLength))
+	query.Set("algorithm", algName)
+	query.Set("digits", strconv.Itoa(o.digits()))
 
 	if o.Counter != 0 {
-		algorithm = "hotp"
+		otpType = "hotp"
 		query.Set("counter", strconv.Itoa(o.Counter))
 	} else {
-		query.Set("period", strconv.Itoa(OTPPeriod))
+		query.Set("period", strconv.Itoa(o.period()))
 	}
 
-	return fmt.Sprintf("otpauth://%s/%s?%s", algorithm, label, query.Encode())
+	return fmt.Sprintf("otpauth://%s/%s?%s", otpType, label, query.Encode())
 }
 
 // CreateHOTPCode creates a new HOTP with a specific counter. This method is
@@ -137,7 +202,7 @@ func (o *OTP) CreateHOTPCode(counter int) (string, error) {
 // of the code. If the counter is set to 0, the algorithm is assumed to be TOTP,
 // otherwise HOTP.
 func (o *OTP) VerifyCode(code string) (bool, error) {
-	if len(code) != OTPLength {
+	if len(code) != o.digits() {
 		return false, fmt.Errorf("invalid length")
 	}
 
@@ -168,7 +233,7 @@ func (o *OTP) VerifyCode(code string) (bool, error) {
 // the current time. Otherwise, backward and forward window is taken into
 // account as well.
 func (o *OTP) verifyTOTP(code string) (bool, error) {
-	curr := int(time.Now().UTC().Unix() / OTPPeriod)
+	curr := int(time.Now().UTC().Unix() / int64(o.period()))
 	back := curr
 	forw := curr
 	if o.Window != 0 {
@@ -223,15 +288,20 @@ func (o *OTP) createCode(interval int) (string, error) {
 		return "", fmt.Errorf("decode string: %w", err)
 	}
 
-	hash := hmac.New(sha1.New, sec)
-	if err := binary.Write(hash, binary.BigEndian, int64(interval)); err != nil {
+	hashFn, _ := o.Algorithm.hash()
+	mac := hmac.New(hashFn, sec)
+	if err := binary.Write(mac, binary.BigEndian, int64(interval)); err != nil {
 		return "", fmt.Errorf("binary write: %w", err)
 	}
-	sign := hash.Sum(nil)
+	sign := mac.Sum(nil)
 
-	offset := sign[19] & 15
+	// RFC 4226 dynamic truncation: the low nibble of the last byte selects a
+	// 4-byte offset. Using len(sign)-1 keeps this correct for SHA1, SHA256,
+	// and SHA512, whose digests have different lengths.
+	offset := sign[len(sign)-1] & 15
 	trunc := binary.BigEndian.Uint32(sign[offset : offset+4])
 
-	mod := uint32(math.Pow10(OTPLength))
-	return fmt.Sprintf("%0*d", OTPLength, (trunc&0x7fffffff)%mod), nil
+	digits := o.digits()
+	mod := uint32(math.Pow10(digits))
+	return fmt.Sprintf("%0*d", digits, (trunc&0x7fffffff)%mod), nil
 }

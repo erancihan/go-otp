@@ -520,6 +520,86 @@ func Test_OTP_createCode(t *testing.T) {
 	})
 }
 
+// Test_OTP_createCode_RFC6238 checks generated codes against the reference
+// test vectors published in RFC 6238, Appendix B, for all three hash
+// algorithms at time T = 59s (time step 1) with 8-digit output.
+// https://datatracker.ietf.org/doc/html/rfc6238#appendix-B
+func Test_OTP_createCode_RFC6238(t *testing.T) {
+	enc := func(seed string) string {
+		return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(seed))
+	}
+
+	cases := []struct {
+		name string
+		alg  Algorithm
+		seed string
+		want string
+	}{
+		{"sha1", AlgorithmSHA1, "12345678901234567890", "94287082"},
+		{"sha256", AlgorithmSHA256, "12345678901234567890123456789012", "46119246"},
+		{"sha512", AlgorithmSHA512, "1234567890123456789012345678901234567890123456789012345678901234", "90693936"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			twoFA := &OTP{
+				Secret:    enc(tc.seed),
+				Digits:    8,
+				Algorithm: tc.alg,
+			}
+			code, err := twoFA.createCode(1) // T = floor(59 / 30) = 1
+			if err != nil {
+				t.Fatal("an error was not \nEXPECTED:\nACTUAL  :", err.Error())
+			}
+			if code != tc.want {
+				t.Error("\nEXPECTED:", tc.want, "\nACTUAL  :", code)
+			}
+		})
+	}
+}
+
+func Test_OTP_CreateURI_customOptions(t *testing.T) {
+	twoFA := &OTP{
+		Issuer:    "issuer",
+		Account:   "account",
+		Secret:    "secret",
+		Digits:    8,
+		Period:    60,
+		Algorithm: AlgorithmSHA256,
+	}
+
+	uri := twoFA.CreateURI()
+	want := "otpauth://totp/issuer:account?algorithm=SHA256&digits=8&issuer=issuer&period=60&secret=secret"
+	if uri != want {
+		t.Error("\nEXPECTED:", want, "\nACTUAL  :", uri)
+	}
+}
+
+func Test_OTP_VerifyCode_customTOTP(t *testing.T) {
+	twoFA := &OTP{
+		Secret:    "GNFE2UCWJRCEOMZSLBHUMVCWKM",
+		Digits:    8,
+		Algorithm: AlgorithmSHA512,
+		Window:    1, // tolerate a time-step boundary crossing during the test
+	}
+
+	code, err := twoFA.createCode(int(time.Now().UTC().Unix() / int64(OTPPeriod)))
+	if err != nil {
+		t.Fatal("an error was not \nEXPECTED:\nACTUAL  :", err.Error())
+	}
+	if len(code) != 8 {
+		t.Error("\nEXPECTED: 8-digit code\nACTUAL  :", len(code), code)
+	}
+
+	ok, err := twoFA.VerifyCode(code)
+	if err != nil {
+		t.Fatal("an error was not \nEXPECTED:\nACTUAL  :", err.Error())
+	}
+	if !ok {
+		t.Error("\nEXPECTED: true\nACTUAL  : false")
+	}
+}
+
 func Test_OTP_usage_TOTP(t *testing.T) {
 	// server stuff
 	sec, err := NewSecret()
